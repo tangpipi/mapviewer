@@ -1,0 +1,34 @@
+{
+    "regions": [
+        {
+            "name": "ATCM",
+            "start": "0x00000000",
+            "size": "128KB",
+            "mirror": "0x20000000"
+        },
+        {
+            "name": "BTCM",
+            "start": "0x00100000",
+            "size": "128KB",
+            "mirror": "0x20100000"
+        },
+        {
+            "name": "SYSTEM_RAM",
+            "start": "0x10000000",
+            "size": "1.5MB",
+            "mirror": "0x30000000"
+        },
+        {
+            "name": "xSPI0",
+            "start": "0x40000000",
+            "size": "128MB",
+            "mirror": "0x60000000"
+        },
+        {
+            "name": "xSPI1",
+            "start": "0x48000000",
+            "size": "128MB",
+            "mirror": "0x68000000"
+        }
+    ]
+}
