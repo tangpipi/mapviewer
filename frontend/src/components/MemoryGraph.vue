@@ -466,6 +466,29 @@ function snapAddress(address: number): number {
   return nearest;
 }
 
+function clamp01(value: number): number {
+  return Math.min(Math.max(value, 0), 1);
+}
+
+function getHorizontalProjection(width: number): { offsetPx: number; usablePx: number } {
+  const offsetPx = (VIEW_SIDE_PADDING_PCT / 100) * width;
+  const usablePx = Math.max(width - offsetPx * 2, 1);
+  return { offsetPx, usablePx };
+}
+
+function ratioToLocalX(ratio: number, width: number): number {
+  const { offsetPx, usablePx } = getHorizontalProjection(width);
+  return offsetPx + clamp01(ratio) * usablePx;
+}
+
+function localXToRatio(localX: number, width: number): number {
+  const { offsetPx, usablePx } = getHorizontalProjection(width);
+  if (width <= 0 || usablePx <= 0) {
+    return 0;
+  }
+  return clamp01((localX - offsetPx) / usablePx);
+}
+
 const getBlockStyle = (node: FlatNode) => {
   const startRatio = (node.address - viewMin.value) / viewSize.value;
   const endRatio = (node.address + node.size - viewMin.value) / viewSize.value;
@@ -477,17 +500,20 @@ const getBlockStyle = (node: FlatNode) => {
   let width = Math.max((clampedEnd - clampedStart) * usablePct, 0);
 
   const containerWidth = container.value?.getBoundingClientRect().width ?? 0;
+  let styleLeft = `${left}%`;
+  let styleWidth = `${width}%`;
   let widthPx = containerWidth > 0 ? (width / 100) * containerWidth : 0;
   if (containerWidth > 0) {
-    const rawLeftPx = (left / 100) * containerWidth;
-    const rawRightPx = ((left + width) / 100) * containerWidth;
-    const snappedLeftPx = Math.floor(rawLeftPx);
-    const snappedRightPx = Math.ceil(rawRightPx);
-    const snappedWidthPx = widthPx > 0 ? Math.max(snappedRightPx - snappedLeftPx, 1) : 0;
+    const startPx = Math.round(ratioToLocalX(clampedStart, containerWidth));
+    const endPx = Math.round(ratioToLocalX(clampedEnd, containerWidth));
+    const snappedLeftPx = startPx;
+    const snappedWidthPx = widthPx > 0 ? Math.max(endPx - startPx, 0) : 0;
 
     left = (snappedLeftPx / containerWidth) * 100;
     width = (snappedWidthPx / containerWidth) * 100;
     widthPx = snappedWidthPx;
+    styleLeft = `${snappedLeftPx}px`;
+    styleWidth = `${snappedWidthPx}px`;
   }
   const tiny = widthPx > 0 && widthPx < 6;
   const ultraThin = widthPx > 0 && widthPx <= 1.2;
@@ -521,8 +547,8 @@ const getBlockStyle = (node: FlatNode) => {
 
   return {
     position: 'absolute' as const,
-    left: `${left}%`,
-    width: `${width}%`,
+    left: styleLeft,
+    width: styleWidth,
     top: `${rowTop(node.depth)}px`,
     height: `${ROW_HEIGHT}px`,
     minWidth: '0',
@@ -826,7 +852,9 @@ const hoverCursorLeft = computed(() => {
   if (width <= 0) {
     return null;
   }
-  const pct = (hoverX.value / width) * 100;
+  const ratio = localXToRatio(hoverX.value, width);
+  const projectedX = ratioToLocalX(ratio, width);
+  const pct = (projectedX / width) * 100;
   return Math.min(Math.max(pct, 0), 99.8);
 });
 
@@ -847,7 +875,7 @@ const hoverAddressLabel = computed(() => {
   if (width <= 0) {
     return '';
   }
-  const ratio = hoverX.value / width;
+  const ratio = localXToRatio(hoverX.value, width);
   const rawAddress = Math.floor(viewMin.value + viewSize.value * ratio);
   const address = snapAddress(rawAddress);
   return `${toHex(address)} (${address})`;
@@ -859,7 +887,7 @@ function addressToLocalX(address: number): number {
   }
   const rect = container.value.getBoundingClientRect();
   const ratio = (address - viewMin.value) / viewSize.value;
-  return Math.min(Math.max(ratio * rect.width, 0), rect.width);
+  return Math.min(Math.max(ratioToLocalX(ratio, rect.width), 0), rect.width);
 }
 
 function localX(event: MouseEvent): number {
@@ -871,7 +899,7 @@ function localX(event: MouseEvent): number {
   if (!(snapEnabled.value || event.ctrlKey) || viewSize.value <= 0) {
     return rawX;
   }
-  const ratio = rawX / rect.width;
+  const ratio = localXToRatio(rawX, rect.width);
   const rawAddress = Math.floor(viewMin.value + viewSize.value * ratio);
   const snappedAddress = snapAddress(rawAddress);
   return addressToLocalX(snappedAddress);
@@ -944,8 +972,8 @@ function onBrushEnd() {
     return;
   }
 
-  const leftRatio = left / width;
-  const rightRatio = right / width;
+  const leftRatio = localXToRatio(left, width);
+  const rightRatio = localXToRatio(right, width);
   const rawStart = viewMin.value + Math.floor(viewSize.value * leftRatio);
   const rawEnd = viewMin.value + Math.ceil(viewSize.value * rightRatio);
   const start = snapAddress(rawStart);
@@ -1102,21 +1130,17 @@ function onCanvasWheel(event: WheelEvent) {
 }
 
 .block.search-hit {
-  outline: 2px solid #f59e0b;
-  outline-offset: -1px;
+  box-shadow: inset 0 0 0 2px #f59e0b;
   z-index: 13;
 }
 
 .block:hover {
-  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.45) !important;
-  outline: 1px solid rgba(0, 0, 0, 0.22);
-  outline-offset: -1px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.45) !important;
   filter: brightness(1.06);
-  z-index: 10;
 }
 
 .block:active {
-  box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.55) !important;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.55) !important;
 }
 
 .label {

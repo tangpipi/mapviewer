@@ -365,6 +365,130 @@ function parseEntryList(lines: string[], moduleById: Map<number, string>, object
   return symbols;
 }
 
+function inferSectionType(sectionName: string): string {
+  const normalized = sectionName.trim().toLowerCase();
+  if (normalized === 'veneer' || normalized.startsWith('.text') || normalized.startsWith('.intvec') || normalized.startsWith('.reset_handler')) {
+    return 'Code';
+  }
+  return 'Data';
+}
+
+function parsePlacementSectionRows(
+  lines: string[],
+  moduleById: Map<number, string>,
+  objectToModule: Map<string, string>
+): MapSymbol[] {
+  const symbols: MapSymbol[] = [];
+
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/\r/g, '');
+    const objectMatch = line.match(/([^\s"']+\.o)\s+\[(\d+)\]\s*$/);
+    if (!objectMatch) {
+      continue;
+    }
+
+    const prefix = line.slice(0, objectMatch.index).trim();
+    if (!prefix) {
+      continue;
+    }
+
+    const parts = prefix.split(/\s+/);
+    const hexTokens = parts.filter((part) => HEX_VALUE_RE.test(part));
+    if (hexTokens.length < 2) {
+      continue;
+    }
+
+    const address = hexTokens[0];
+    const size = hexTokens[hexTokens.length - 1];
+    const firstToken = parts[0] ?? '';
+    const firstTokenLower = firstToken.toLowerCase();
+
+    let sectionName = firstToken;
+    if (!sectionName || firstTokenLower === 'inited' || firstTokenLower === 'uninit' || firstTokenLower === 'const') {
+      sectionName = firstTokenLower === 'uninit' ? '.bss' : '.data';
+    }
+
+    const object = toBaseObjectName(objectMatch[1]);
+    const moduleId = Number(objectMatch[2]);
+    const modulePath = moduleById.get(moduleId);
+
+    symbols.push({
+      name: sectionName,
+      address: parseHex(address),
+      size: parseHex(size),
+      type: inferSectionType(sectionName),
+      object,
+      module: modulePath ? toModuleDisplayName(modulePath) : (objectToModule.get(object) ?? 'Unknown')
+    });
+  }
+
+  symbols.sort((a, b) => a.address - b.address || b.size - a.size);
+  return symbols;
+}
+
+function mergeSymbols(primary: MapSymbol[], secondary: MapSymbol[]): MapSymbol[] {
+  if (secondary.length === 0) {
+    return primary;
+  }
+
+  const primaryByObject = new Map<string, MapSymbol[]>();
+  for (const item of primary) {
+    const key = `${item.object}|${item.module}`;
+    const list = primaryByObject.get(key);
+    if (!list) {
+      primaryByObject.set(key, [item]);
+      continue;
+    }
+    list.push(item);
+  }
+
+  const hasPrimaryCoverage = (item: MapSymbol): boolean => {
+    if (item.size <= 0) {
+      return false;
+    }
+
+    const key = `${item.object}|${item.module}`;
+    const candidates = primaryByObject.get(key);
+    if (!candidates || candidates.length === 0) {
+      return false;
+    }
+
+    const end = item.address + item.size;
+    for (const existing of candidates) {
+      if (existing.size <= 0) {
+        continue;
+      }
+      const existingEnd = existing.address + existing.size;
+      if (existing.address < end && existingEnd > item.address) {
+        return true;
+      }
+    }
+
+    return false;
+  };
+
+  const merged = [...primary];
+  const seen = new Set<string>(
+    primary.map((item) => `${item.object}|${item.module}|${item.address}|${item.size}|${item.name}|${item.type}`)
+  );
+
+  for (const item of secondary) {
+    if (hasPrimaryCoverage(item)) {
+      continue;
+    }
+
+    const key = `${item.object}|${item.module}|${item.address}|${item.size}|${item.name}|${item.type}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(item);
+  }
+
+  merged.sort((a, b) => a.address - b.address || b.size - a.size);
+  return merged;
+}
+
 function parseConfiguredRegions(memoryConfigStr?: string): ParsedRegion[] {
   if (!memoryConfigStr) {
     return [];
@@ -717,7 +841,9 @@ export function parseIarMap(mapContent: string, memoryConfigStr?: string, option
   const unusedRanges = parseUnusedRanges(placementSummary);
   const placementObjectRanges = parsePlacementObjectRanges(placementSummary, moduleById);
   const objectToModule = parseModuleSummary(moduleSummary);
-  const symbols = parseEntryList(entryList, moduleById, objectToModule);
+  const symbolsFromEntryList = parseEntryList(entryList, moduleById, objectToModule);
+  const symbolsFromPlacement = parsePlacementSectionRows(placementSummary, moduleById, objectToModule);
+  const symbols = mergeSymbols(symbolsFromEntryList, symbolsFromPlacement);
   const configuredRegions = parseConfiguredRegions(memoryConfigStr);
 
   return buildMemoryTree(

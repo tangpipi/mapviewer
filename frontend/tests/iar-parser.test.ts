@@ -65,9 +65,11 @@ describe('parseIarMap', () => {
   const root = resolve(__dirname, '..', '..');
   const map1 = resolve(root, 'examples', 'example1.map');
   const map2 = resolve(root, 'examples', 'example2.map');
+  const etherKitCassMap = resolve(root, 'EtherKit_CASS.map');
   const configPath = resolve(root, 'memory_config.json');
   const hasMap1 = existsSync(map1)
   const hasMap2 = existsSync(map2)
+  const hasEtherKitCassMap = existsSync(etherKitCassMap)
   const hasExampleMaps = hasMap1 && hasMap2
 
   ;(hasMap1 ? it : it.skip)('builds non-empty region/object/symbol hierarchy from example1.map', () => {
@@ -356,5 +358,27 @@ real_func_alias              0x120            Code  Gb  foo.o [1]
       const dropped = objects.filter((node) => placementBacked.has(node.name) && node.size <= 0)
       expect(dropped.length).toBe(0)
     }
+  })
+
+  ;(hasEtherKitCassMap ? it : it.skip)('parses dense section rows between otp data and bsp_irq_sense rodata in EtherKit_CASS.map', () => {
+    const mapText = readFileSync(etherKitCassMap, 'utf8')
+    const allNodes = flatten(parseIarMap(mapText))
+
+    const rangeStart = 0x113438
+    const rangeEnd = 0x113914
+    const inRangeLeaves = allNodes.filter((node) => node.children.length === 0 && node.address >= rangeStart && node.address < rangeEnd)
+    const at24cxxRodata = inRangeLeaves.find((node) => node.address === 0x113678 && node.size === 0x19c)
+
+    expect(inRangeLeaves.length).toBeGreaterThan(10)
+    expect(at24cxxRodata).toBeDefined()
+    expect(inRangeLeaves.some((node) => node.address === 0x1138a4 && node.size === 0x70)).toBe(true)
+  })
+
+  ;(hasEtherKitCassMap ? it : it.skip)('does not create bogus low-address hal_data object from uninit placement rows', () => {
+    const mapText = readFileSync(etherKitCassMap, 'utf8')
+    const allNodes = flatten(parseIarMap(mapText))
+    const bogus = allNodes.find((node) => node.type === 'Object' && node.name.includes('hal_data.o') && node.address < 0x1000)
+
+    expect(bogus).toBeUndefined()
   })
 });
