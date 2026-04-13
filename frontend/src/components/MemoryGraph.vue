@@ -29,20 +29,20 @@
         </div>
 
         <div
-          v-for="(node, i) in visibleBlocks"
-          :key="`block-${i}`"
+          v-for="node in visibleBlocks"
+          :key="`block-${node.depth}-${node.address}-${node.size}-${node.name}`"
           :class="['block', { 'search-hit': isBlockMatched(node) }]"
           :style="getBlockStyle(node)"
           :title="getTooltip(node)"
           @click.stop="zoomTo(node)"
         >
-          <span v-if="shouldRenderBlockLabel(node)" class="label">{{ node.name }}</span>
+          <span class="label">{{ getBlockLabelText(node) }}</span>
         </div>
 
         <div
           v-if="showLabels"
-          v-for="(marker, idx) in renderLabelMarkers"
-          :key="`marker-${idx}`"
+          v-for="marker in renderLabelMarkers"
+          :key="`marker-${marker.address}-${marker.count}`"
           :class="['label-marker', { 'search-hit-label': isLabelMatched(marker) }]"
           :style="getMarkerStyle(marker)"
           :title="getMarkerTooltip(marker)"
@@ -576,7 +576,7 @@ function projectRatioToPercent(ratio: number): number {
   return (snappedPx / containerWidth) * 100;
 }
 
-function shouldRenderBlockLabel(node: FlatNode): boolean {
+function getBlockLabelText(node: FlatNode): string {
   const startRatio = (node.address - viewMin.value) / viewSize.value;
   const endRatio = (node.address + node.size - viewMin.value) / viewSize.value;
   const clampedStart = Math.min(Math.max(startRatio, 0), 1);
@@ -584,17 +584,27 @@ function shouldRenderBlockLabel(node: FlatNode): boolean {
   const usablePct = Math.max(100 - VIEW_SIDE_PADDING_PCT * 2, 1);
   const widthPct = Math.max((clampedEnd - clampedStart) * usablePct, 0);
   if (widthPct <= 0) {
-    return false;
+    return '';
   }
 
   const containerWidth = container.value?.getBoundingClientRect().width ?? 0;
   if (containerWidth <= 0) {
-    return widthPct >= 2.2;
+    return '';
   }
 
   const widthPx = (widthPct / 100) * containerWidth;
-  const requiredPx = Math.min(150, Math.max(14, node.name.length * 6.2 + 6));
-  return widthPx >= requiredPx;
+  const textAreaPx = Math.max(widthPx - 8, 0);
+  const charCapacity = Math.floor(textAreaPx / 6.2);
+  if (charCapacity < 3) {
+    return '';
+  }
+
+  if (node.name.length <= charCapacity) {
+    return node.name;
+  }
+
+  const keep = Math.max(charCapacity - 2, 1);
+  return `${node.name.slice(0, keep)}..`;
 }
 
 const getMarkerStyle = (marker: RenderLabelMarker) => {
@@ -1130,7 +1140,8 @@ function onCanvasWheel(event: WheelEvent) {
 }
 
 .block.search-hit {
-  box-shadow: inset 0 0 0 2px #f59e0b;
+  outline: 2px solid #f59e0b;
+  outline-offset: -1px;
   z-index: 13;
 }
 
